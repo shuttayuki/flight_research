@@ -86,15 +86,34 @@ def travelpayouts_request(endpoint, params):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def make_aviasales_link(origin, destination, date_str):
+    """Build an Aviasales search URL with affiliate marker.
+
+    URL format: https://www.aviasales.com/search/HND0506TPE1
+    Date portion: DDMM
+    """
+    marker = os.getenv("TRAVELPAYOUTS_MARKER", "")
+    # date_str: "2026-05-13" → "1305"
+    parts = date_str.split("-")
+    dd = parts[2]
+    mm = parts[1]
+    url = f"https://www.aviasales.com/search/{origin}{dd}{mm}{destination}1"
+    if marker:
+        url += f"?marker={marker}"
+    return url
+
+
 def search_travelpayouts(origin, destination, year, month):
     """Search flights via Travelpayouts calendar API.
 
     Returns cheapest flight per day for the given month.
     """
+    month_prefix = f"{year}-{month:02d}"
+
     params = {
         "origin": origin,
         "destination": destination,
-        "depart_date": f"{year}-{month:02d}",
+        "depart_date": month_prefix,
         "currency": "jpy",
         "calendar_type": "departure_date",
     }
@@ -105,6 +124,10 @@ def search_travelpayouts(origin, destination, year, month):
 
     results = []
     for date_str, flight in data.get("data", {}).items():
+        # Filter to only the requested month
+        if not date_str.startswith(month_prefix):
+            continue
+
         dep_at = flight.get("departure_at", "")
         results.append({
             "date": date_str,
@@ -115,7 +138,7 @@ def search_travelpayouts(origin, destination, year, month):
             "direct": flight.get("transfers", 1) == 0,
             "stopovers": flight.get("transfers", 0),
             "airline": flight.get("airline", ""),
-            "deep_link": "",
+            "deep_link": make_aviasales_link(origin, destination, date_str),
             "departure_time": dep_at[11:16] if len(dep_at) > 16 else "",
             "arrival_time": "",
             "duration_hours": 0,
