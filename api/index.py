@@ -1,94 +1,136 @@
-"""Vercel Serverless Function — Flight Price Comparison API."""
+"""Vercel Serverless Function — Flight Price Comparison API (Kiwi/Tequila)."""
 
 import hashlib
 import json
 import math
 import os
-import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
-# Add parent dir to path for data imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+TEQUILA_BASE = "https://tequila-api.kiwi.com"
 
-# --- Amadeus ---
-
-_amadeus_client = None
-
-
-def get_amadeus():
-    global _amadeus_client
-    if _amadeus_client is None:
-        from amadeus import Amadeus
-
-        _amadeus_client = Amadeus(
-            client_id=os.getenv("AMADEUS_API_KEY"),
-            client_secret=os.getenv("AMADEUS_API_SECRET"),
-        )
-    return _amadeus_client
-
-
-def amadeus_available():
-    return bool(os.getenv("AMADEUS_API_KEY") and os.getenv("AMADEUS_API_SECRET"))
-
-
-# --- Airport Data (inline to avoid import issues on Vercel) ---
+# --- Airport Data ---
 
 AIRPORTS = [
-    {"iata": "TPE", "name": "Taoyuan International", "city": "Taipei", "country": "Taiwan", "name_ja": "桃園国際空港", "city_ja": "台北"},
-    {"iata": "TSA", "name": "Songshan", "city": "Taipei", "country": "Taiwan", "name_ja": "松山空港", "city_ja": "台北"},
-    {"iata": "ICN", "name": "Incheon International", "city": "Seoul", "country": "South Korea", "name_ja": "仁川国際空港", "city_ja": "ソウル"},
-    {"iata": "GMP", "name": "Gimpo International", "city": "Seoul", "country": "South Korea", "name_ja": "金浦国際空港", "city_ja": "ソウル"},
-    {"iata": "PUS", "name": "Gimhae International", "city": "Busan", "country": "South Korea", "name_ja": "金海国際空港", "city_ja": "釜山"},
-    {"iata": "PEK", "name": "Capital International", "city": "Beijing", "country": "China", "name_ja": "首都国際空港", "city_ja": "北京"},
-    {"iata": "PKX", "name": "Daxing International", "city": "Beijing", "country": "China", "name_ja": "大興国際空港", "city_ja": "北京"},
-    {"iata": "PVG", "name": "Pudong International", "city": "Shanghai", "country": "China", "name_ja": "浦東国際空港", "city_ja": "上海"},
-    {"iata": "SHA", "name": "Hongqiao International", "city": "Shanghai", "country": "China", "name_ja": "虹橋国際空港", "city_ja": "上海"},
-    {"iata": "HKG", "name": "Hong Kong International", "city": "Hong Kong", "country": "China", "name_ja": "香港国際空港", "city_ja": "香港"},
-    {"iata": "MFM", "name": "Macau International", "city": "Macau", "country": "China", "name_ja": "マカオ国際空港", "city_ja": "マカオ"},
-    {"iata": "CAN", "name": "Baiyun International", "city": "Guangzhou", "country": "China", "name_ja": "白雲国際空港", "city_ja": "広州"},
-    {"iata": "SZX", "name": "Bao'an International", "city": "Shenzhen", "country": "China", "name_ja": "宝安国際空港", "city_ja": "深圳"},
-    {"iata": "BKK", "name": "Suvarnabhumi", "city": "Bangkok", "country": "Thailand", "name_ja": "スワンナプーム空港", "city_ja": "バンコク"},
-    {"iata": "DMK", "name": "Don Mueang", "city": "Bangkok", "country": "Thailand", "name_ja": "ドンムアン空港", "city_ja": "バンコク"},
-    {"iata": "CNX", "name": "Chiang Mai International", "city": "Chiang Mai", "country": "Thailand", "name_ja": "チェンマイ国際空港", "city_ja": "チェンマイ"},
-    {"iata": "HKT", "name": "Phuket International", "city": "Phuket", "country": "Thailand", "name_ja": "プーケット国際空港", "city_ja": "プーケット"},
-    {"iata": "SIN", "name": "Changi", "city": "Singapore", "country": "Singapore", "name_ja": "チャンギ空港", "city_ja": "シンガポール"},
-    {"iata": "KUL", "name": "Kuala Lumpur International", "city": "Kuala Lumpur", "country": "Malaysia", "name_ja": "クアラルンプール国際空港", "city_ja": "クアラルンプール"},
-    {"iata": "MNL", "name": "Ninoy Aquino International", "city": "Manila", "country": "Philippines", "name_ja": "ニノイ・アキノ国際空港", "city_ja": "マニラ"},
-    {"iata": "CEB", "name": "Mactan-Cebu International", "city": "Cebu", "country": "Philippines", "name_ja": "マクタン・セブ国際空港", "city_ja": "セブ"},
-    {"iata": "HAN", "name": "Noi Bai International", "city": "Hanoi", "country": "Vietnam", "name_ja": "ノイバイ国際空港", "city_ja": "ハノイ"},
-    {"iata": "SGN", "name": "Tan Son Nhat International", "city": "Ho Chi Minh City", "country": "Vietnam", "name_ja": "タンソンニャット国際空港", "city_ja": "ホーチミン"},
-    {"iata": "DAD", "name": "Da Nang International", "city": "Da Nang", "country": "Vietnam", "name_ja": "ダナン国際空港", "city_ja": "ダナン"},
-    {"iata": "DPS", "name": "Ngurah Rai International", "city": "Bali", "country": "Indonesia", "name_ja": "ングラ・ライ国際空港", "city_ja": "バリ"},
-    {"iata": "CGK", "name": "Soekarno-Hatta International", "city": "Jakarta", "country": "Indonesia", "name_ja": "スカルノ・ハッタ国際空港", "city_ja": "ジャカルタ"},
-    {"iata": "PNH", "name": "Phnom Penh International", "city": "Phnom Penh", "country": "Cambodia", "name_ja": "プノンペン国際空港", "city_ja": "プノンペン"},
-    {"iata": "REP", "name": "Siem Reap International", "city": "Siem Reap", "country": "Cambodia", "name_ja": "シェムリアップ国際空港", "city_ja": "シェムリアップ"},
-    {"iata": "DEL", "name": "Indira Gandhi International", "city": "Delhi", "country": "India", "name_ja": "インディラ・ガンディー国際空港", "city_ja": "デリー"},
-    {"iata": "BOM", "name": "Chhatrapati Shivaji Maharaj International", "city": "Mumbai", "country": "India", "name_ja": "チャトラパティ・シヴァージー国際空港", "city_ja": "ムンバイ"},
-    {"iata": "DXB", "name": "Dubai International", "city": "Dubai", "country": "UAE", "name_ja": "ドバイ国際空港", "city_ja": "ドバイ"},
-    {"iata": "DOH", "name": "Hamad International", "city": "Doha", "country": "Qatar", "name_ja": "ハマド国際空港", "city_ja": "ドーハ"},
-    {"iata": "IST", "name": "Istanbul Airport", "city": "Istanbul", "country": "Turkey", "name_ja": "イスタンブール空港", "city_ja": "イスタンブール"},
-    {"iata": "SYD", "name": "Kingsford Smith", "city": "Sydney", "country": "Australia", "name_ja": "シドニー空港", "city_ja": "シドニー"},
-    {"iata": "MEL", "name": "Melbourne Airport", "city": "Melbourne", "country": "Australia", "name_ja": "メルボルン空港", "city_ja": "メルボルン"},
-    {"iata": "AKL", "name": "Auckland Airport", "city": "Auckland", "country": "New Zealand", "name_ja": "オークランド空港", "city_ja": "オークランド"},
-    {"iata": "GUM", "name": "Antonio B. Won Pat International", "city": "Guam", "country": "Guam", "name_ja": "グアム国際空港", "city_ja": "グアム"},
-    {"iata": "LAX", "name": "Los Angeles International", "city": "Los Angeles", "country": "USA", "name_ja": "ロサンゼルス国際空港", "city_ja": "ロサンゼルス"},
-    {"iata": "SFO", "name": "San Francisco International", "city": "San Francisco", "country": "USA", "name_ja": "サンフランシスコ国際空港", "city_ja": "サンフランシスコ"},
-    {"iata": "JFK", "name": "John F. Kennedy International", "city": "New York", "country": "USA", "name_ja": "ジョン・F・ケネディ国際空港", "city_ja": "ニューヨーク"},
-    {"iata": "SEA", "name": "Seattle-Tacoma International", "city": "Seattle", "country": "USA", "name_ja": "シアトル・タコマ国際空港", "city_ja": "シアトル"},
-    {"iata": "HNL", "name": "Daniel K. Inouye International", "city": "Honolulu", "country": "USA", "name_ja": "ダニエル・K・イノウエ国際空港", "city_ja": "ホノルル"},
-    {"iata": "YVR", "name": "Vancouver International", "city": "Vancouver", "country": "Canada", "name_ja": "バンクーバー国際空港", "city_ja": "バンクーバー"},
-    {"iata": "LHR", "name": "Heathrow", "city": "London", "country": "UK", "name_ja": "ヒースロー空港", "city_ja": "ロンドン"},
-    {"iata": "CDG", "name": "Charles de Gaulle", "city": "Paris", "country": "France", "name_ja": "シャルル・ド・ゴール空港", "city_ja": "パリ"},
-    {"iata": "FRA", "name": "Frankfurt Airport", "city": "Frankfurt", "country": "Germany", "name_ja": "フランクフルト空港", "city_ja": "フランクフルト"},
-    {"iata": "AMS", "name": "Schiphol", "city": "Amsterdam", "country": "Netherlands", "name_ja": "スキポール空港", "city_ja": "アムステルダム"},
-    {"iata": "FCO", "name": "Leonardo da Vinci-Fiumicino", "city": "Rome", "country": "Italy", "name_ja": "フィウミチーノ空港", "city_ja": "ローマ"},
-    {"iata": "BCN", "name": "Josep Tarradellas Barcelona-El Prat", "city": "Barcelona", "country": "Spain", "name_ja": "バルセロナ空港", "city_ja": "バルセロナ"},
-    {"iata": "HEL", "name": "Helsinki-Vantaa", "city": "Helsinki", "country": "Finland", "name_ja": "ヘルシンキ・ヴァンター空港", "city_ja": "ヘルシンキ"},
+    {"iata": "TPE", "name": "Taoyuan International", "city": "Taipei", "country": "Taiwan", "name_ja": "桃園国際空港", "city_ja": "台北", "flag": "🇹🇼"},
+    {"iata": "TSA", "name": "Songshan", "city": "Taipei", "country": "Taiwan", "name_ja": "松山空港", "city_ja": "台北", "flag": "🇹🇼"},
+    {"iata": "ICN", "name": "Incheon International", "city": "Seoul", "country": "South Korea", "name_ja": "仁川国際空港", "city_ja": "ソウル", "flag": "🇰🇷"},
+    {"iata": "GMP", "name": "Gimpo International", "city": "Seoul", "country": "South Korea", "name_ja": "金浦国際空港", "city_ja": "ソウル", "flag": "🇰🇷"},
+    {"iata": "PUS", "name": "Gimhae International", "city": "Busan", "country": "South Korea", "name_ja": "金海国際空港", "city_ja": "釜山", "flag": "🇰🇷"},
+    {"iata": "PEK", "name": "Capital International", "city": "Beijing", "country": "China", "name_ja": "首都国際空港", "city_ja": "北京", "flag": "🇨🇳"},
+    {"iata": "PKX", "name": "Daxing International", "city": "Beijing", "country": "China", "name_ja": "大興国際空港", "city_ja": "北京", "flag": "🇨🇳"},
+    {"iata": "PVG", "name": "Pudong International", "city": "Shanghai", "country": "China", "name_ja": "浦東国際空港", "city_ja": "上海", "flag": "🇨🇳"},
+    {"iata": "SHA", "name": "Hongqiao International", "city": "Shanghai", "country": "China", "name_ja": "虹橋国際空港", "city_ja": "上海", "flag": "🇨🇳"},
+    {"iata": "HKG", "name": "Hong Kong International", "city": "Hong Kong", "country": "China", "name_ja": "香港国際空港", "city_ja": "香港", "flag": "🇭🇰"},
+    {"iata": "MFM", "name": "Macau International", "city": "Macau", "country": "China", "name_ja": "マカオ国際空港", "city_ja": "マカオ", "flag": "🇲🇴"},
+    {"iata": "CAN", "name": "Baiyun International", "city": "Guangzhou", "country": "China", "name_ja": "白雲国際空港", "city_ja": "広州", "flag": "🇨🇳"},
+    {"iata": "SZX", "name": "Bao'an International", "city": "Shenzhen", "country": "China", "name_ja": "宝安国際空港", "city_ja": "深圳", "flag": "🇨🇳"},
+    {"iata": "BKK", "name": "Suvarnabhumi", "city": "Bangkok", "country": "Thailand", "name_ja": "スワンナプーム空港", "city_ja": "バンコク", "flag": "🇹🇭"},
+    {"iata": "DMK", "name": "Don Mueang", "city": "Bangkok", "country": "Thailand", "name_ja": "ドンムアン空港", "city_ja": "バンコク", "flag": "🇹🇭"},
+    {"iata": "CNX", "name": "Chiang Mai International", "city": "Chiang Mai", "country": "Thailand", "name_ja": "チェンマイ国際空港", "city_ja": "チェンマイ", "flag": "🇹🇭"},
+    {"iata": "HKT", "name": "Phuket International", "city": "Phuket", "country": "Thailand", "name_ja": "プーケット国際空港", "city_ja": "プーケット", "flag": "🇹🇭"},
+    {"iata": "SIN", "name": "Changi", "city": "Singapore", "country": "Singapore", "name_ja": "チャンギ空港", "city_ja": "シンガポール", "flag": "🇸🇬"},
+    {"iata": "KUL", "name": "Kuala Lumpur International", "city": "Kuala Lumpur", "country": "Malaysia", "name_ja": "クアラルンプール国際空港", "city_ja": "クアラルンプール", "flag": "🇲🇾"},
+    {"iata": "MNL", "name": "Ninoy Aquino International", "city": "Manila", "country": "Philippines", "name_ja": "ニノイ・アキノ国際空港", "city_ja": "マニラ", "flag": "🇵🇭"},
+    {"iata": "CEB", "name": "Mactan-Cebu International", "city": "Cebu", "country": "Philippines", "name_ja": "マクタン・セブ国際空港", "city_ja": "セブ", "flag": "🇵🇭"},
+    {"iata": "HAN", "name": "Noi Bai International", "city": "Hanoi", "country": "Vietnam", "name_ja": "ノイバイ国際空港", "city_ja": "ハノイ", "flag": "🇻🇳"},
+    {"iata": "SGN", "name": "Tan Son Nhat International", "city": "Ho Chi Minh City", "country": "Vietnam", "name_ja": "タンソンニャット国際空港", "city_ja": "ホーチミン", "flag": "🇻🇳"},
+    {"iata": "DAD", "name": "Da Nang International", "city": "Da Nang", "country": "Vietnam", "name_ja": "ダナン国際空港", "city_ja": "ダナン", "flag": "🇻🇳"},
+    {"iata": "DPS", "name": "Ngurah Rai International", "city": "Bali", "country": "Indonesia", "name_ja": "ングラ・ライ国際空港", "city_ja": "バリ", "flag": "🇮🇩"},
+    {"iata": "CGK", "name": "Soekarno-Hatta International", "city": "Jakarta", "country": "Indonesia", "name_ja": "スカルノ・ハッタ国際空港", "city_ja": "ジャカルタ", "flag": "🇮🇩"},
+    {"iata": "PNH", "name": "Phnom Penh International", "city": "Phnom Penh", "country": "Cambodia", "name_ja": "プノンペン国際空港", "city_ja": "プノンペン", "flag": "🇰🇭"},
+    {"iata": "REP", "name": "Siem Reap International", "city": "Siem Reap", "country": "Cambodia", "name_ja": "シェムリアップ国際空港", "city_ja": "シェムリアップ", "flag": "🇰🇭"},
+    {"iata": "DEL", "name": "Indira Gandhi International", "city": "Delhi", "country": "India", "name_ja": "インディラ・ガンディー国際空港", "city_ja": "デリー", "flag": "🇮🇳"},
+    {"iata": "BOM", "name": "Chhatrapati Shivaji Maharaj International", "city": "Mumbai", "country": "India", "name_ja": "チャトラパティ・シヴァージー国際空港", "city_ja": "ムンバイ", "flag": "🇮🇳"},
+    {"iata": "DXB", "name": "Dubai International", "city": "Dubai", "country": "UAE", "name_ja": "ドバイ国際空港", "city_ja": "ドバイ", "flag": "🇦🇪"},
+    {"iata": "DOH", "name": "Hamad International", "city": "Doha", "country": "Qatar", "name_ja": "ハマド国際空港", "city_ja": "ドーハ", "flag": "🇶🇦"},
+    {"iata": "IST", "name": "Istanbul Airport", "city": "Istanbul", "country": "Turkey", "name_ja": "イスタンブール空港", "city_ja": "イスタンブール", "flag": "🇹🇷"},
+    {"iata": "SYD", "name": "Kingsford Smith", "city": "Sydney", "country": "Australia", "name_ja": "シドニー空港", "city_ja": "シドニー", "flag": "🇦🇺"},
+    {"iata": "MEL", "name": "Melbourne Airport", "city": "Melbourne", "country": "Australia", "name_ja": "メルボルン空港", "city_ja": "メルボルン", "flag": "🇦🇺"},
+    {"iata": "AKL", "name": "Auckland Airport", "city": "Auckland", "country": "New Zealand", "name_ja": "オークランド空港", "city_ja": "オークランド", "flag": "🇳🇿"},
+    {"iata": "GUM", "name": "Antonio B. Won Pat International", "city": "Guam", "country": "Guam", "name_ja": "グアム国際空港", "city_ja": "グアム", "flag": "🇬🇺"},
+    {"iata": "LAX", "name": "Los Angeles International", "city": "Los Angeles", "country": "USA", "name_ja": "ロサンゼルス国際空港", "city_ja": "ロサンゼルス", "flag": "🇺🇸"},
+    {"iata": "SFO", "name": "San Francisco International", "city": "San Francisco", "country": "USA", "name_ja": "サンフランシスコ国際空港", "city_ja": "サンフランシスコ", "flag": "🇺🇸"},
+    {"iata": "JFK", "name": "John F. Kennedy International", "city": "New York", "country": "USA", "name_ja": "ジョン・F・ケネディ国際空港", "city_ja": "ニューヨーク", "flag": "🇺🇸"},
+    {"iata": "SEA", "name": "Seattle-Tacoma International", "city": "Seattle", "country": "USA", "name_ja": "シアトル・タコマ国際空港", "city_ja": "シアトル", "flag": "🇺🇸"},
+    {"iata": "HNL", "name": "Daniel K. Inouye International", "city": "Honolulu", "country": "USA", "name_ja": "ダニエル・K・イノウエ国際空港", "city_ja": "ホノルル", "flag": "🌺"},
+    {"iata": "YVR", "name": "Vancouver International", "city": "Vancouver", "country": "Canada", "name_ja": "バンクーバー国際空港", "city_ja": "バンクーバー", "flag": "🇨🇦"},
+    {"iata": "LHR", "name": "Heathrow", "city": "London", "country": "UK", "name_ja": "ヒースロー空港", "city_ja": "ロンドン", "flag": "🇬🇧"},
+    {"iata": "CDG", "name": "Charles de Gaulle", "city": "Paris", "country": "France", "name_ja": "シャルル・ド・ゴール空港", "city_ja": "パリ", "flag": "🇫🇷"},
+    {"iata": "FRA", "name": "Frankfurt Airport", "city": "Frankfurt", "country": "Germany", "name_ja": "フランクフルト空港", "city_ja": "フランクフルト", "flag": "🇩🇪"},
+    {"iata": "AMS", "name": "Schiphol", "city": "Amsterdam", "country": "Netherlands", "name_ja": "スキポール空港", "city_ja": "アムステルダム", "flag": "🇳🇱"},
+    {"iata": "FCO", "name": "Leonardo da Vinci-Fiumicino", "city": "Rome", "country": "Italy", "name_ja": "フィウミチーノ空港", "city_ja": "ローマ", "flag": "🇮🇹"},
+    {"iata": "BCN", "name": "Josep Tarradellas Barcelona-El Prat", "city": "Barcelona", "country": "Spain", "name_ja": "バルセロナ空港", "city_ja": "バルセロナ", "flag": "🇪🇸"},
+    {"iata": "HEL", "name": "Helsinki-Vantaa", "city": "Helsinki", "country": "Finland", "name_ja": "ヘルシンキ・ヴァンター空港", "city_ja": "ヘルシンキ", "flag": "🇫🇮"},
 ]
 
-# --- Demo Price Generator ---
+AIRPORT_MAP = {a["iata"]: a for a in AIRPORTS}
+
+
+# --- Kiwi/Tequila API ---
+
+def tequila_available():
+    return bool(os.getenv("KIWI_API_KEY"))
+
+
+def tequila_request(endpoint, params):
+    """Make a request to the Tequila API."""
+    api_key = os.getenv("KIWI_API_KEY")
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    url = f"{TEQUILA_BASE}{endpoint}?{query}"
+    req = Request(url, headers={"apikey": api_key})
+    with urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def search_kiwi(origin, destination, date_from, date_to):
+    """Search flights via Kiwi/Tequila API for a date range.
+
+    Returns list of cheapest flight per day.
+    """
+    params = {
+        "fly_from": origin,
+        "fly_to": destination,
+        "date_from": date_from.strftime("%d/%m/%Y"),
+        "date_to": date_to.strftime("%d/%m/%Y"),
+        "flight_type": "oneway",
+        "curr": "JPY",
+        "locale": "ja",
+        "limit": 300,
+        "sort": "price",
+        "max_stopovers": 2,
+    }
+    data = tequila_request("/v2/search", params)
+
+    # Group by departure date and keep cheapest per day
+    by_date = {}
+    for flight in data.get("data", []):
+        dep_date = flight["local_departure"][:10]  # YYYY-MM-DD
+        price = flight["price"]
+        if dep_date not in by_date or price < by_date[dep_date]["price"]:
+            airlines = list({r["airline"] for r in flight.get("route", [])})
+            stopovers = len(flight.get("route", [])) - 1
+            by_date[dep_date] = {
+                "date": dep_date,
+                "price": price,
+                "currency": "JPY",
+                "origin": origin,
+                "destination": destination,
+                "direct": stopovers == 0,
+                "stopovers": stopovers,
+                "airline": ", ".join(airlines[:2]),
+                "deep_link": flight.get("deep_link", ""),
+                "departure_time": flight["local_departure"][11:16],
+                "arrival_time": flight["local_arrival"][11:16],
+                "duration_hours": round(flight.get("duration", {}).get("departure", 0) / 3600, 1),
+            }
+    return sorted(by_date.values(), key=lambda x: x["date"])
+
+
+# --- Demo Price Generator (fallback) ---
 
 DEMO_PRICES = {
     "HND": {"base": 35000, "variance": 15000},
@@ -118,32 +160,31 @@ def generate_demo_prices(origin, destination, year, month):
 
         dow = date.weekday()
         weekend_premium = 8000 if dow in (4, 5) else 0
-
         seasonal = int(variance * 0.5 * math.sin(2 * math.pi * (month - 3) / 12))
-
         day_hash = int(
             hashlib.md5(f"{origin}{destination}{date}".encode()).hexdigest()[:6], 16
         )
         day_variance = (day_hash % variance) - variance // 2
-
         price = max(15000, base + dest_offset + weekend_premium + seasonal + day_variance)
 
-        results.append(
-            {
-                "date": date.strftime("%Y-%m-%d"),
-                "price": price,
-                "currency": "JPY",
-                "origin": origin,
-                "destination": destination,
-                "direct": day_hash % 3 != 0,
-                "airline": ["ANA", "JAL", "Peach", "Jetstar", "Spring Japan"][day_hash % 5],
-            }
-        )
+        results.append({
+            "date": date.strftime("%Y-%m-%d"),
+            "price": price,
+            "currency": "JPY",
+            "origin": origin,
+            "destination": destination,
+            "direct": day_hash % 3 != 0,
+            "stopovers": 0 if day_hash % 3 != 0 else 1,
+            "airline": ["ANA", "JAL", "Peach", "Jetstar", "Spring Japan"][day_hash % 5],
+            "deep_link": "",
+            "departure_time": f"{9 + day_hash % 12:02d}:00",
+            "arrival_time": f"{12 + day_hash % 10:02d}:30",
+            "duration_hours": round(2.5 + (day_hash % 20) / 10, 1),
+        })
     return results
 
 
 # --- Route Handlers ---
-
 
 def handle_search(params):
     destination = params.get("destination", [""])[0].upper()
@@ -158,63 +199,52 @@ def handle_search(params):
 
     origins = ["HND", "NRT"]
 
-    if amadeus_available():
-        return _search_amadeus(origins, destination, year, month)
+    # Calculate date range for the month
+    first_day = datetime(year, month, 1)
+    if month == 12:
+        last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
     else:
-        return _search_demo(origins, destination, year, month)
+        last_day = datetime(year, month + 1, 1) - timedelta(days=1)
 
+    # Don't search past dates
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if first_day < today:
+        first_day = today
 
-def _search_amadeus(origins, destination, year, month):
-    amadeus = get_amadeus()
+    if last_day < today:
+        return 200, {
+            "origins": {"HND": [], "NRT": []},
+            "destination": destination,
+            "year": year,
+            "month": month,
+            "data_source": "none",
+        }
+
     results = {}
+    data_source = "demo"
 
-    for origin in origins:
-        try:
-            response = amadeus.shopping.flight_dates.get(
-                origin=origin,
-                destination=destination,
-                departureDate=f"{year}-{month:02d}-01",
-                oneWay=True,
-            )
-            prices = []
-            for offer in response.data:
-                dep_date = offer["departureDate"]
-                price_info = offer["price"]
-                prices.append(
-                    {
-                        "date": dep_date,
-                        "price": int(float(price_info["total"])),
-                        "currency": price_info.get("currency", "JPY"),
-                        "origin": origin,
-                        "destination": destination,
-                        "direct": offer.get("links", {}).get("flightOffers", "").find("nonstop") >= 0,
-                        "airline": "",
-                    }
-                )
-            results[origin] = prices
-        except Exception as e:
+    if tequila_available():
+        data_source = "kiwi"
+        for origin in origins:
+            try:
+                results[origin] = search_kiwi(origin, destination, first_day, last_day)
+            except Exception as e:
+                results[origin] = generate_demo_prices(origin, destination, year, month)
+                results[f"{origin}_error"] = str(e)
+    else:
+        for origin in origins:
             results[origin] = generate_demo_prices(origin, destination, year, month)
-            results[f"{origin}_error"] = str(e)
+
+    # Airport info for the destination
+    dest_info = AIRPORT_MAP.get(destination, {"iata": destination, "city_ja": destination, "name_ja": "", "flag": ""})
 
     return 200, {
         "origins": results,
         "destination": destination,
+        "destination_info": dest_info,
         "year": year,
         "month": month,
-        "data_source": "amadeus",
-    }
-
-
-def _search_demo(origins, destination, year, month):
-    results = {}
-    for origin in origins:
-        results[origin] = generate_demo_prices(origin, destination, year, month)
-    return 200, {
-        "origins": results,
-        "destination": destination,
-        "year": year,
-        "month": month,
-        "data_source": "demo",
+        "data_source": data_source,
     }
 
 
@@ -222,26 +252,6 @@ def handle_airports(params):
     keyword = params.get("q", [""])[0].strip()
     if len(keyword) < 2:
         return 200, []
-
-    if amadeus_available():
-        try:
-            amadeus = get_amadeus()
-            response = amadeus.reference_data.locations.get(
-                keyword=keyword,
-                subType="AIRPORT",
-            )
-            airports = [
-                {
-                    "iata": loc["iataCode"],
-                    "name": loc["name"],
-                    "city": loc.get("address", {}).get("cityName", ""),
-                    "country": loc.get("address", {}).get("countryName", ""),
-                }
-                for loc in response.data[:10]
-            ]
-            return 200, airports
-        except Exception:
-            pass
 
     keyword_lower = keyword.lower()
     matches = []
@@ -259,8 +269,12 @@ def handle_airports(params):
     return 200, matches
 
 
-# --- Vercel Handler ---
+def handle_destinations(params):
+    """Return all available destinations for the top page."""
+    return 200, AIRPORTS
 
+
+# --- Vercel Handler ---
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -272,6 +286,8 @@ class handler(BaseHTTPRequestHandler):
             status, body = handle_search(params)
         elif path == "/api/airports":
             status, body = handle_airports(params)
+        elif path == "/api/destinations":
+            status, body = handle_destinations(params)
         else:
             status, body = 404, {"error": "Not found"}
 
