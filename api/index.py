@@ -1,4 +1,4 @@
-"""Vercel Serverless Function — Flight Price Comparison API (Kiwi/Tequila)."""
+"""Vercel Serverless Function — Flight Price Comparison API (Travelpayouts/Aviasales)."""
 
 import hashlib
 import json
@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
-TEQUILA_BASE = "https://tequila-api.kiwi.com"
+TRAVELPAYOUTS_BASE = "https://api.travelpayouts.com"
 
 # --- Airport Data ---
 
@@ -70,64 +70,57 @@ AIRPORTS = [
 AIRPORT_MAP = {a["iata"]: a for a in AIRPORTS}
 
 
-# --- Kiwi/Tequila API ---
+# --- Travelpayouts/Aviasales API ---
 
-def tequila_available():
-    return bool(os.getenv("KIWI_API_KEY"))
+def travelpayouts_available():
+    return bool(os.getenv("TRAVELPAYOUTS_TOKEN"))
 
 
-def tequila_request(endpoint, params):
-    """Make a request to the Tequila API."""
-    api_key = os.getenv("KIWI_API_KEY")
+def travelpayouts_request(endpoint, params):
+    """Make a request to the Travelpayouts API."""
+    token = os.getenv("TRAVELPAYOUTS_TOKEN")
     query = "&".join(f"{k}={v}" for k, v in params.items())
-    url = f"{TEQUILA_BASE}{endpoint}?{query}"
-    req = Request(url, headers={"apikey": api_key})
+    url = f"{TRAVELPAYOUTS_BASE}{endpoint}?{query}"
+    req = Request(url, headers={"x-access-token": token})
     with urlopen(req, timeout=15) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def search_kiwi(origin, destination, date_from, date_to):
-    """Search flights via Kiwi/Tequila API for a date range.
+def search_travelpayouts(origin, destination, year, month):
+    """Search flights via Travelpayouts calendar API.
 
-    Returns list of cheapest flight per day.
+    Returns cheapest flight per day for the given month.
     """
     params = {
-        "fly_from": origin,
-        "fly_to": destination,
-        "date_from": date_from.strftime("%d/%m/%Y"),
-        "date_to": date_to.strftime("%d/%m/%Y"),
-        "flight_type": "oneway",
-        "curr": "JPY",
-        "locale": "ja",
-        "limit": 300,
-        "sort": "price",
-        "max_stopovers": 2,
+        "origin": origin,
+        "destination": destination,
+        "depart_date": f"{year}-{month:02d}",
+        "currency": "jpy",
+        "calendar_type": "departure_date",
     }
-    data = tequila_request("/v2/search", params)
+    data = travelpayouts_request("/v1/prices/calendar", params)
 
-    # Group by departure date and keep cheapest per day
-    by_date = {}
-    for flight in data.get("data", []):
-        dep_date = flight["local_departure"][:10]  # YYYY-MM-DD
-        price = flight["price"]
-        if dep_date not in by_date or price < by_date[dep_date]["price"]:
-            airlines = list({r["airline"] for r in flight.get("route", [])})
-            stopovers = len(flight.get("route", [])) - 1
-            by_date[dep_date] = {
-                "date": dep_date,
-                "price": price,
-                "currency": "JPY",
-                "origin": origin,
-                "destination": destination,
-                "direct": stopovers == 0,
-                "stopovers": stopovers,
-                "airline": ", ".join(airlines[:2]),
-                "deep_link": flight.get("deep_link", ""),
-                "departure_time": flight["local_departure"][11:16],
-                "arrival_time": flight["local_arrival"][11:16],
-                "duration_hours": round(flight.get("duration", {}).get("departure", 0) / 3600, 1),
-            }
-    return sorted(by_date.values(), key=lambda x: x["date"])
+    if not data.get("success"):
+        return []
+
+    results = []
+    for date_str, flight in data.get("data", {}).items():
+        dep_at = flight.get("departure_at", "")
+        results.append({
+            "date": date_str,
+            "price": int(flight["price"]),
+            "currency": "JPY",
+            "origin": origin,
+            "destination": destination,
+            "direct": flight.get("transfers", 1) == 0,
+            "stopovers": flight.get("transfers", 0),
+            "airline": flight.get("airline", ""),
+            "deep_link": "",
+            "departure_time": dep_at[11:16] if len(dep_at) > 16 else "",
+            "arrival_time": "",
+            "duration_hours": 0,
+        })
+    return sorted(results, key=lambda x: x["date"])
 
 
 # --- Demo Price Generator (fallback) ---
@@ -223,11 +216,11 @@ def handle_search(params):
     results = {}
     data_source = "demo"
 
-    if tequila_available():
-        data_source = "kiwi"
+    if travelpayouts_available():
+        data_source = "travelpayouts"
         for origin in origins:
             try:
-                results[origin] = search_kiwi(origin, destination, first_day, last_day)
+                results[origin] = search_travelpayouts(origin, destination, year, month)
             except Exception as e:
                 results[origin] = generate_demo_prices(origin, destination, year, month)
                 results[f"{origin}_error"] = str(e)
