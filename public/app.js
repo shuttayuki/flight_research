@@ -33,6 +33,15 @@ function isWeekend(dateStr) {
     return dow === 0 || dow === 6;
 }
 
+function buildSearchUrl(flight) {
+    // Build a Google Flights search URL as fallback
+    const d = new Date(flight.date);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `https://www.google.com/travel/flights?q=flights+from+${flight.origin}+to+${flight.destination}+on+${yyyy}-${mm}-${dd}`;
+}
+
 // --- Init: extract IATA from URL ---
 function init() {
     const path = window.location.pathname;
@@ -134,6 +143,7 @@ function renderResults(data) {
     const hndMin = hndPrices.length > 0 ? hndPrices.reduce((a, b) => a.price < b.price ? a : b) : null;
     const nrtMin = nrtPrices.length > 0 ? nrtPrices.reduce((a, b) => a.price < b.price ? a : b) : null;
 
+    renderExternalLinks(data.destination, data.year, data.month);
     renderSummary(hndMin, nrtMin);
     renderRecommendation(hndMin, nrtMin);
     renderCalendar(hndMap, nrtMap, hndMin, nrtMin, data.year, data.month);
@@ -148,6 +158,52 @@ function renderResults(data) {
     }
     notice.classList.remove("hidden");
     document.getElementById("results").classList.remove("hidden");
+}
+
+function renderExternalLinks(destination, year, month) {
+    const container = document.getElementById("external-search-links");
+    if (!container) return;
+
+    const mm = String(month).padStart(2, "0");
+    const ym = `${year}${mm}`;
+
+    // Build search URLs for various sites
+    const links = [
+        {
+            name: "Google Flights",
+            icon: "🔍",
+            hnd: `https://www.google.com/travel/flights?q=flights+from+HND+to+${destination}+on+${year}-${mm}`,
+            nrt: `https://www.google.com/travel/flights?q=flights+from+NRT+to+${destination}+on+${year}-${mm}`,
+        },
+        {
+            name: "Skyscanner",
+            icon: "🛫",
+            hnd: `https://www.skyscanner.jp/transport/flights/hnd/${destination.toLowerCase()}/${year}${mm}/`,
+            nrt: `https://www.skyscanner.jp/transport/flights/nrt/${destination.toLowerCase()}/${year}${mm}/`,
+        },
+        {
+            name: "Aviasales",
+            icon: "✈",
+            hnd: `https://www.aviasales.com/search/HND01${mm}${destination}1`,
+            nrt: `https://www.aviasales.com/search/NRT01${mm}${destination}1`,
+        },
+    ];
+
+    container.innerHTML = links.map(l => `
+        <div class="flex flex-col gap-1">
+            <span class="text-xs text-gray-500 font-medium">${l.icon} ${l.name}</span>
+            <div class="flex gap-2">
+                <a href="${l.hnd}" target="_blank" rel="noopener"
+                   class="px-3 py-1.5 text-sm bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition font-medium">
+                    羽田発
+                </a>
+                <a href="${l.nrt}" target="_blank" rel="noopener"
+                   class="px-3 py-1.5 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition font-medium">
+                    成田発
+                </a>
+            </div>
+        </div>
+    `).join("");
 }
 
 function renderSummary(hndMin, nrtMin) {
@@ -350,7 +406,7 @@ function renderTable(hndPrices, nrtPrices) {
             <td class="py-3 px-3 text-sm ${diff === 0 ? "saving-good" : "saving-bad"}">
                 ${diff === 0 ? "最安" : `+${formatPrice(diff)}`}
             </td>
-            <td class="py-3 px-3">${f.deep_link ? `<a href="${f.deep_link}" target="_blank" rel="noopener" class="text-blue-600 hover:underline text-sm">予約 →</a>` : ""}</td>
+            <td class="py-3 px-3"><a href="${f.deep_link || buildSearchUrl(f)}" target="_blank" rel="noopener" class="inline-block px-3 py-1 bg-blue-600 text-white text-xs rounded-full hover:bg-blue-700 transition">検索 →</a></td>
         `;
         table.appendChild(tr);
     });
