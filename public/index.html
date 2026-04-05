@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlightScope - 東京発フライト価格比較</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+        <div class="max-w-6xl mx-auto px-4 py-8 text-center">
+            <h1 class="text-4xl font-bold tracking-tight">FlightScope</h1>
+            <p class="text-blue-100 mt-2 text-lg">東京（羽田・成田）発 — いつ行くと一番安い？</p>
+        </div>
+    </header>
+
+    <!-- Search Bar -->
+    <div class="max-w-6xl mx-auto px-4 -mt-6">
+        <div class="bg-white rounded-xl shadow-lg p-4">
+            <div class="relative">
+                <input type="text" id="search-input"
+                    placeholder="行き先を検索（例: 台北, BKK, ソウル, Bangkok）"
+                    class="w-full px-5 py-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-lg"
+                    autocomplete="off">
+                <div id="autocomplete-list" class="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 hidden max-h-72 overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Destinations Grid -->
+    <main class="max-w-6xl mx-auto px-4 py-10">
+        <h2 class="text-2xl font-bold text-gray-800 mb-6">行き先を選ぶ</h2>
+
+        <!-- Region Tabs -->
+        <div class="flex flex-wrap gap-2 mb-6" id="region-tabs">
+            <button class="region-tab active px-4 py-2 rounded-full text-sm font-medium bg-blue-600 text-white" data-region="all">すべて</button>
+            <button class="region-tab px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200" data-region="east-asia">東アジア</button>
+            <button class="region-tab px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200" data-region="southeast-asia">東南アジア</button>
+            <button class="region-tab px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200" data-region="oceania">オセアニア</button>
+            <button class="region-tab px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200" data-region="north-america">北米</button>
+            <button class="region-tab px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200" data-region="europe">ヨーロッパ</button>
+            <button class="region-tab px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200" data-region="south-asia">南アジア・中東</button>
+        </div>
+
+        <div id="destinations-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-400 text-center py-6 mt-12">
+        <p class="text-sm">FlightScope — 東京発フライト価格比較ツール</p>
+        <p class="text-xs mt-1">※ 表示価格は参考値です。実際の価格は航空会社の公式サイトでご確認ください。</p>
+    </footer>
+
+    <script>
+    // --- Region mapping ---
+    const REGIONS = {
+        "east-asia": ["TPE","TSA","ICN","GMP","PUS","PEK","PKX","PVG","SHA","HKG","MFM","CAN","SZX"],
+        "southeast-asia": ["BKK","DMK","CNX","HKT","SIN","KUL","MNL","CEB","HAN","SGN","DAD","DPS","CGK","PNH","REP"],
+        "south-asia": ["DEL","BOM","DXB","DOH","IST"],
+        "oceania": ["SYD","MEL","AKL","GUM"],
+        "north-america": ["LAX","SFO","JFK","SEA","HNL","YVR"],
+        "europe": ["LHR","CDG","FRA","AMS","FCO","BCN","HEL"],
+    };
+
+    function getRegion(iata) {
+        for (const [region, codes] of Object.entries(REGIONS)) {
+            if (codes.includes(iata)) return region;
+        }
+        return "other";
+    }
+
+    // --- Render destinations ---
+    let allDestinations = [];
+
+    async function loadDestinations() {
+        const res = await fetch("/api/destinations");
+        allDestinations = await res.json();
+        renderDestinations("all");
+    }
+
+    function renderDestinations(region) {
+        const grid = document.getElementById("destinations-grid");
+        const filtered = region === "all"
+            ? allDestinations
+            : allDestinations.filter(d => getRegion(d.iata) === region);
+
+        grid.innerHTML = filtered.map(d => `
+            <a href="/destinations/${d.iata}" class="dest-card bg-white rounded-xl shadow-sm hover:shadow-md transition p-5 block group">
+                <div class="text-3xl mb-2">${d.flag || "✈"}</div>
+                <div class="font-bold text-gray-800 group-hover:text-blue-600 transition">${d.city_ja || d.city}</div>
+                <div class="text-xs text-gray-400 mt-1">${d.iata} · ${d.country}</div>
+            </a>
+        `).join("");
+    }
+
+    // --- Region tabs ---
+    document.getElementById("region-tabs").addEventListener("click", (e) => {
+        const tab = e.target.closest(".region-tab");
+        if (!tab) return;
+        document.querySelectorAll(".region-tab").forEach(t => {
+            t.classList.remove("active", "bg-blue-600", "text-white");
+            t.classList.add("bg-gray-100", "text-gray-700");
+        });
+        tab.classList.add("active", "bg-blue-600", "text-white");
+        tab.classList.remove("bg-gray-100", "text-gray-700");
+        renderDestinations(tab.dataset.region);
+    });
+
+    // --- Search autocomplete ---
+    const searchInput = document.getElementById("search-input");
+    const acList = document.getElementById("autocomplete-list");
+    let acDebounce = null;
+
+    searchInput.addEventListener("input", (e) => {
+        clearTimeout(acDebounce);
+        acDebounce = setTimeout(async () => {
+            const q = e.target.value.trim();
+            if (q.length < 2) { acList.classList.add("hidden"); return; }
+            const res = await fetch(`/api/airports?q=${encodeURIComponent(q)}`);
+            const airports = await res.json();
+            if (airports.length === 0) { acList.classList.add("hidden"); return; }
+            acList.innerHTML = airports.map(a => `
+                <a href="/destinations/${a.iata}" class="ac-item block px-4 py-3 border-b border-gray-50 hover:bg-blue-50">
+                    <span class="font-bold text-blue-600">${a.iata}</span>
+                    <span class="text-gray-600 ml-2">${a.city_ja || a.city}</span>
+                    <span class="text-gray-400 text-sm ml-1">${a.name_ja || a.name}</span>
+                </a>
+            `).join("");
+            acList.classList.remove("hidden");
+        }, 200);
+    });
+
+    document.addEventListener("click", (e) => {
+        if (!acList.contains(e.target) && e.target !== searchInput) {
+            acList.classList.add("hidden");
+        }
+    });
+
+    loadDestinations();
+    </script>
+</body>
+</html>
