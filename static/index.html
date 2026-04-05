@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlightScope - 東京発フライト価格比較</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+        <div class="max-w-6xl mx-auto px-4 py-6">
+            <h1 class="text-3xl font-bold tracking-tight">✈ FlightScope</h1>
+            <p class="text-blue-100 mt-1">東京（羽田・成田）発 — いつ行くと一番安い？</p>
+        </div>
+    </header>
+
+    <!-- Search Section -->
+    <main class="max-w-6xl mx-auto px-4 py-8">
+        <div class="bg-white rounded-xl shadow-md p-6 mb-8">
+            <div class="flex flex-col md:flex-row gap-4 items-end">
+                <!-- Destination Input -->
+                <div class="flex-1 relative">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">行き先</label>
+                    <input type="text" id="destination-input"
+                        placeholder="都市名・空港コードで検索（例: 台北, BKK, ソウル）"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-lg"
+                        autocomplete="off">
+                    <div id="autocomplete-list" class="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 hidden max-h-72 overflow-y-auto"></div>
+                </div>
+
+                <!-- Month Selector -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">月</label>
+                    <div class="flex gap-2">
+                        <button id="prev-month" class="px-3 py-3 border border-gray-300 rounded-lg hover:bg-gray-100 transition">◀</button>
+                        <div id="month-display" class="px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 min-w-32 text-center font-medium"></div>
+                        <button id="next-month" class="px-3 py-3 border border-gray-300 rounded-lg hover:bg-gray-100 transition">▶</button>
+                    </div>
+                </div>
+
+                <!-- Search Button -->
+                <button id="search-btn"
+                    class="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                    検索
+                </button>
+            </div>
+
+            <!-- Selected destination display -->
+            <div id="selected-dest" class="mt-3 hidden">
+                <span class="inline-flex items-center gap-2 bg-blue-50 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                    <span id="selected-dest-text"></span>
+                    <button id="clear-dest" class="hover:text-blue-600">✕</button>
+                </span>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="hidden text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+            <p class="mt-4 text-gray-600">フライト価格を検索中...</p>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="hidden">
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div id="hnd-summary" class="bg-white rounded-xl shadow-md p-6 border-l-4 border-red-500">
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="text-2xl">🔴</span>
+                        <div>
+                            <h3 class="font-bold text-lg">羽田空港 (HND)</h3>
+                            <p class="text-sm text-gray-500">Tokyo Haneda</p>
+                        </div>
+                    </div>
+                    <div id="hnd-best" class="text-gray-700"></div>
+                </div>
+                <div id="nrt-summary" class="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="text-2xl">🔵</span>
+                        <div>
+                            <h3 class="font-bold text-lg">成田空港 (NRT)</h3>
+                            <p class="text-sm text-gray-500">Tokyo Narita</p>
+                        </div>
+                    </div>
+                    <div id="nrt-best" class="text-gray-700"></div>
+                </div>
+            </div>
+
+            <!-- Recommendation Banner -->
+            <div id="recommendation" class="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-5 mb-8 hidden">
+                <div class="flex items-start gap-3">
+                    <span class="text-2xl">💡</span>
+                    <div id="recommendation-text" class="text-green-800"></div>
+                </div>
+            </div>
+
+            <!-- Price Calendar -->
+            <div class="bg-white rounded-xl shadow-md p-6 mb-8">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">価格カレンダー</h2>
+                    <div class="flex gap-4 text-sm">
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-400 inline-block"></span> 羽田</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-blue-400 inline-block"></span> 成田</span>
+                    </div>
+                </div>
+                <div id="calendar" class="grid grid-cols-7 gap-1"></div>
+            </div>
+
+            <!-- Price Chart (Bar comparison) -->
+            <div class="bg-white rounded-xl shadow-md p-6 mb-8">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">日別価格比較</h2>
+                <div id="chart-container" class="overflow-x-auto">
+                    <div id="price-chart" class="flex items-end gap-1 min-h-64 pb-8 relative"></div>
+                </div>
+            </div>
+
+            <!-- Detail Table -->
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">価格一覧（安い順）</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="border-b-2 border-gray-200 text-sm text-gray-600">
+                                <th class="py-3 px-4">日付</th>
+                                <th class="py-3 px-4">曜日</th>
+                                <th class="py-3 px-4">出発空港</th>
+                                <th class="py-3 px-4">価格</th>
+                                <th class="py-3 px-4">直行便</th>
+                                <th class="py-3 px-4">航空会社</th>
+                                <th class="py-3 px-4">差額</th>
+                            </tr>
+                        </thead>
+                        <tbody id="price-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data source notice -->
+        <div id="data-source-notice" class="hidden mt-6 text-center text-sm text-gray-400">
+        </div>
+
+        <!-- Initial State / Popular Destinations -->
+        <div id="initial-state" class="text-center py-12">
+            <p class="text-gray-500 text-lg mb-8">行き先を入力して、最安フライトを見つけましょう</p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl mx-auto">
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="TPE" data-name="台北">
+                    <div class="text-2xl mb-2">🇹🇼</div>
+                    <div class="font-medium">台北</div>
+                    <div class="text-sm text-gray-400">TPE</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="ICN" data-name="ソウル">
+                    <div class="text-2xl mb-2">🇰🇷</div>
+                    <div class="font-medium">ソウル</div>
+                    <div class="text-sm text-gray-400">ICN</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="BKK" data-name="バンコク">
+                    <div class="text-2xl mb-2">🇹🇭</div>
+                    <div class="font-medium">バンコク</div>
+                    <div class="text-sm text-gray-400">BKK</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="SIN" data-name="シンガポール">
+                    <div class="text-2xl mb-2">🇸🇬</div>
+                    <div class="font-medium">シンガポール</div>
+                    <div class="text-sm text-gray-400">SIN</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="HKG" data-name="香港">
+                    <div class="text-2xl mb-2">🇭🇰</div>
+                    <div class="font-medium">香港</div>
+                    <div class="text-sm text-gray-400">HKG</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="HNL" data-name="ホノルル">
+                    <div class="text-2xl mb-2">🌺</div>
+                    <div class="font-medium">ホノルル</div>
+                    <div class="text-sm text-gray-400">HNL</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="DPS" data-name="バリ">
+                    <div class="text-2xl mb-2">🇮🇩</div>
+                    <div class="font-medium">バリ</div>
+                    <div class="text-sm text-gray-400">DPS</div>
+                </button>
+                <button class="dest-shortcut bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition text-left" data-iata="DAD" data-name="ダナン">
+                    <div class="text-2xl mb-2">🇻🇳</div>
+                    <div class="font-medium">ダナン</div>
+                    <div class="text-sm text-gray-400">DAD</div>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-400 text-center py-6 mt-12">
+        <p class="text-sm">FlightScope — 東京発フライト価格比較ツール</p>
+        <p class="text-xs mt-1">※ 表示価格は参考値です。実際の価格は航空会社の公式サイトでご確認ください。</p>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+</html>
