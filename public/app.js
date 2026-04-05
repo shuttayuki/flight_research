@@ -142,9 +142,9 @@ function renderResults(data) {
 
     const notice = document.getElementById("data-source-notice");
     if (data.data_source === "demo") {
-        notice.textContent = "※ デモデータを表示中。KIWI_API_KEY を設定すると実際の航空券価格が表示されます。";
+        notice.textContent = "※ デモデータを表示中。TRAVELPAYOUTS_TOKEN を設定すると実際の航空券価格が表示されます。";
     } else {
-        notice.textContent = "※ Kiwi.com API経由の参考価格です。実際の価格は各航空会社サイトでご確認ください。";
+        notice.textContent = "※ Aviasales/Travelpayouts API経由の参考価格です。実際の価格は各航空会社サイトでご確認ください。";
     }
     notice.classList.remove("hidden");
     document.getElementById("results").classList.remove("hidden");
